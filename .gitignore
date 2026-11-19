@@ -18,6 +18,19 @@ __pycache__/
 cleanup_log.txt
 crash.log
 
+# ---- PyInstaller 打包产物（exe 走 Releases，不进仓库）----
+build/
+dist/
+*.spec
+
+# ---- 开发期临时截图与诊断文件 ----
+_shot_*.png
+_exe_*.png
+_selftest.png
+_diag.txt
+_wrap.txt
+_probe.cmd
+
 # ---- 系统 ----
 Thumbs.db
 desktop.ini

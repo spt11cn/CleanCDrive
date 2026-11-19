@@ -18,6 +18,21 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+# 日志与崩溃记录的存放位置。
+# 打包成 onefile exe 后，HERE 指向的是临时解压目录，程序退出即被删除，
+# 所以必须换到一个稳定可写的位置，否则日志等于没写。
+FROZEN = getattr(sys, "frozen", False)
+if FROZEN:
+    DATA_DIR = os.path.join(
+        os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"),
+        "CleanCDrive")
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+    except OSError:
+        DATA_DIR = os.path.expanduser("~")
+else:
+    DATA_DIR = HERE
+
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -71,7 +86,7 @@ class CleanApp(tk.Tk):
         self.busy = False
         self.modules = {}
         self.rows = {}
-        self.log_path = os.path.join(HERE, "cleanup_log.txt")
+        self.log_path = os.path.join(DATA_DIR, "cleanup_log.txt")
 
         self._init_style()
         self._build_ui()
@@ -681,13 +696,16 @@ if __name__ == "__main__":
         main()
     except Exception:
         err = traceback.format_exc()
+        crash_path = os.path.join(DATA_DIR, "crash.log")
         try:
-            with open(os.path.join(HERE, "crash.log"), "w", encoding="utf-8") as f:
+            with open(crash_path, "w", encoding="utf-8") as f:
                 f.write(err)
         except OSError:
-            pass
+            crash_path = "（写入失败）"
         try:
-            ctypes.windll.user32.MessageBoxW(0, err[-1500:], "C 盘清理工具 · 启动失败", 0x10)
+            ctypes.windll.user32.MessageBoxW(
+                0, err[-1200:] + "\n\n崩溃记录已保存到：\n" + crash_path,
+                "C 盘清理工具 · 启动失败", 0x10)
         except Exception:
             pass
         raise

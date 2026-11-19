@@ -6,6 +6,40 @@
 
 ![界面预览](CleanCDrive/preview-admin.png)
 
+## 下载即用（推荐）
+
+到 [Releases](../../releases) 页下载 `CleanCDrive.exe`，放到任意目录双击运行。**不需要安装 Python**，单文件约 17 MB，不写注册表，删掉即卸载。
+
+> 单文件 exe 首次启动会先解压到临时目录，约 1~2 秒；杀软偶尔会误报 PyInstaller 打包的程序，属已知现象，可加白名单。
+
+## 从源码运行
+
+需要 Python 3.8+ 且带 tkinter（Windows 官方安装包默认自带）。
+
+```
+双击「启动 C盘清理工具.cmd」
+```
+
+启动器会依次尝试 `pyw` / `py` / PATH 上的 `pythonw` / 常见安装位置 / 注册表登记的路径，并且**对每个候选实际 `import tkinter` 验证一遍**——因为有些 Python 发行版不带 tkinter，直接调 `pythonw` 会静默失败、什么都不弹。全部失败时会给出明确的下载提示。
+
+也可以手动执行：
+
+```bat
+python CleanCDrive.pyw
+```
+
+## 权限
+
+界面顶部有黄色提示条时点「以管理员身份重启」，会弹 UAC 确认。只有管理员权限下才能处理 `Program Files` 和 `Windows` 下的目标（Edge / WebView2 / 夸克 / 更新缓存 / WinSxS）。
+
+### 只扫描不删除
+
+```bat
+python cleaner_core.py --scan
+```
+
+只打印清单，不做任何修改。这一条在 exe 版里没有对应入口，需要源码运行。
+
 ## 它清理什么
 
 8 个独立模块，每一项都先扫描出**真实占用**再让你勾选：
@@ -59,44 +93,22 @@ msedge.exe → <assemblyIdentity name="157.0.4341.42" version="157.0.4341.42"/>
 
 相关程序正在运行时，被占用的文件自动跳过，不会强制关闭你正在使用的软件。
 
-## 运行
-
-需要 Python 3.8+（含 tkinter，Windows 官方安装包默认自带）。
-
-```
-双击「启动 C盘清理工具.cmd」
-```
-
-或用命令行：
-
-```bat
-python CleanCDrive.pyw
-```
-
-提权：界面顶部有黄色提示条时点「以管理员身份重启」，会弹 UAC 确认。管理员权限下才能处理 `Program Files` 和 `Windows` 下的目标。
-
-### 只扫描不删除
-
-```bat
-python cleaner_core.py --scan
-```
-
-只打印清单，不做任何修改。
-
 ## 文件说明
 
 ```
 CleanCDrive/
 ├── cleaner_core.py           清理引擎：所有扫描、判定、删除逻辑
 ├── CleanCDrive.pyw           tkinter 图形界面
-├── 启动 C盘清理工具.cmd       双击入口（调用 pythonw，不弹控制台）
-├── app.ico                   图标
+├── 启动 C盘清理工具.cmd       源码运行的双击入口
+├── app.ico                   图标（同时用于 exe 图标）
 ├── README.txt                面向使用者的说明
 ├── preview-user.png          普通权限界面
 └── preview-admin.png         管理员权限界面
 ```
 
 `cleaner_core.py` 不依赖 GUI，可以单独 import 或用 `--scan` 当命令行工具跑。
+
+**日志位置**：源码运行时写在程序目录下的 `cleanup_log.txt`；exe 版写在 `%LOCALAPPDATA%\CleanCDrive\cleanup_log.txt`（因为单文件 exe 的临时解压目录会被清掉，写在里面等于没写）。崩溃记录 `crash.log` 同理。
 
 ## 已知限制
 
