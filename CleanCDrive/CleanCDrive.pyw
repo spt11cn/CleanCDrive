@@ -91,9 +91,11 @@ class CleanApp(tk.Tk):
         self._init_style()
         self._build_ui()
         self._refresh_disk()
+        self._build_rows()          # 预渲染模块列表，尺寸显示"—"，不触发扫描
         self._bind_shortcuts()
         self.after(120, self._poll)
-        self.after(300, self.start_scan)
+        # 不自动扫描：由用户点击「扫描体检」或按 F5 触发
+        self.log("已就绪。点击「扫描体检」开始检测可清理项。", "dim")
 
     # ------------------------------------------------------------ 样式
     def _init_style(self):
@@ -484,8 +486,11 @@ class CleanApp(tk.Tk):
         if self.busy:
             return
         mods = self._selected()
+        if not self.modules:
+            messagebox.showinfo(APP_TITLE, "还没有扫描。\n\n请先点「扫描体检」，扫描完成后再勾选要清理的项目。")
+            return
         if not mods:
-            messagebox.showinfo(APP_TITLE, "没有勾选任何可执行的项目。\n先点「扫描体检」，再勾选要清理的项。")
+            messagebox.showinfo(APP_TITLE, "没有勾选任何可执行的项目。\n勾选左侧复选框后再试。")
             return
 
         total = sum(m.total for m in mods)
