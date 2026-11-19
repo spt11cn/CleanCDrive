@@ -1,0 +1,24 @@
+# ---- 扫描日志：含本机完整文件清单与软件名，不提交 ----
+c_scan_raw.txt
+c_scan_sub.txt
+c_scan_appdata.txt
+
+# ---- 早期 PowerShell 脚本：功能已由 CleanCDrive 覆盖，且含本地绝对路径 ----
+/*.ps1
+
+# ---- Edge 引导器备份：微软版权二进制文件 ----
+edge-stub-backup/
+
+# ---- 工作区内部数据 ----
+.workbuddy/
+
+# ---- Python 构建产物与运行日志 ----
+__pycache__/
+*.pyc
+cleanup_log.txt
+crash.log
+
+# ---- 系统 ----
+Thumbs.db
+desktop.ini
+.DS_Store
