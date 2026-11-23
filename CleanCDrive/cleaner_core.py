@@ -210,6 +210,67 @@ def sxs_bound_version(path: str) -> Optional[str]:
 
 
 # --------------------------------------------------------------------------
+# 版本归属判定：靠「谁在用这个版本」来决定保留谁，而不是靠版本号高低
+# --------------------------------------------------------------------------
+
+SERVICES_KEY = r"SYSTEM\CurrentControlSet\Services"
+
+
+def service_image_paths() -> List[tuple]:
+    """枚举本机所有服务的 (服务名, ImagePath)，用于版本归属判定"""
+    out = []
+    try:
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, SERVICES_KEY)
+    except OSError:
+        return out
+    with key:
+        idx = 0
+        while True:
+            try:
+                name = winreg.EnumKey(key, idx)
+            except OSError:
+                break
+            idx += 1
+            try:
+                with winreg.OpenKey(key, name) as sk:
+                    try:
+                        ip = str(winreg.QueryValueEx(sk, "ImagePath")[0])
+                    except OSError:
+                        continue
+            except OSError:
+                continue
+            out.append((name, ip))
+    return out
+
+
+def version_in_path(image_path: str, marker: str) -> Optional[str]:
+    """从 ...\\<marker>\\<版本>\\... 形式的路径里提取版本号"""
+    if not image_path:
+        return None
+    p = image_path.strip('"').replace("/", "\\")
+    m = re.search(re.escape(marker) + r"\\+(\d+(?:\.\d+){1,3})\\+", p, re.I)
+    return m.group(1) if m else None
+
+
+def service_bound_versions(marker: str) -> Dict[str, str]:
+    """返回 {版本号: 依据}——被服务引用的版本，必须保留"""
+    keep = {}
+    for name, ip in service_image_paths():
+        v = version_in_path(ip, marker)
+        if v and VRE.match(v):
+            keep.setdefault(v, "服务 %s" % name)
+    return keep
+
+
+def _recently_touched(path: str, hours: float = 2.0) -> bool:
+    """目录是否在最近 hours 小时内变动过（防止删掉刚升级、还没走完切换的版本）"""
+    try:
+        return (time.time() - os.path.getmtime(path)) < hours * 3600
+    except OSError:
+        return False
+
+
+# --------------------------------------------------------------------------
 # 删除实现
 # --------------------------------------------------------------------------
 
@@ -335,6 +396,8 @@ class Module:
 # --------------------------------------------------------------------------
 
 MODULE_SPECS = [
+    ("miservice", "小米管家 MiService 旧版本", "小米电脑管家历史版本，保留服务正在运行的版本", True, True),
+    ("xiaomi_extra", "小米组件其他残留", "AI 服务旧版本、旧版管家目录、云更新器安装包", True, True),
     ("win_update", "Windows 更新缓存", "已装的更新包残留，删后重装会重新下载", True, True),
     ("win_temp", "系统临时文件", "Windows\\Temp 内超 2 小时的残留", True, True),
     ("win_leftover", "升级/回滚残留", "$WinREAgent 等系统升级遗留目录", True, True),
@@ -349,6 +412,154 @@ MODULE_SPECS = [
 def module_specs():
     return [{"key": k, "name": n, "desc": d, "needs_admin": a, "default_checked": c}
             for k, n, d, a, c in MODULE_SPECS]
+
+
+# ---- 0. 小米组件（本机实测的版本堆积） -------------------------------
+
+MISERVICE_ROOT = os.path.join(PF86, "Timi Personal Computing", "MiService")
+MI_ROOT = os.path.join(PF, "MI")
+XPM_ROOT = os.path.join(MI_ROOT, "XiaomiPCManager")
+AISERVICE_ROOT = os.path.join(MI_ROOT, "AIService")
+XIAOMI_UPDATER = os.path.join(LOCAL, "xiaomicloud-updater")
+
+
+def scan_miservice(log: PROGRESS = None) -> Module:
+    """小米电脑管家 MiService。
+
+    判定依据：MiService / MiDeviceService 两个服务的 ImagePath 指向哪个版本目录。
+    这台机器实测堆了 22 个版本（3.3.1.613 -> 4.1.1.778），只保留最近那个。
+    """
+    m = Module("miservice", "小米管家 MiService 旧版本",
+               "小米电脑管家升级后遗留的旧版本目录，保留系统服务正在运行的版本", True)
+    if not os.path.isdir(MISERVICE_ROOT):
+        m.note = "未检出 MiService 安装目录"
+        return m
+    try:
+        vers = [x for x in os.listdir(MISERVICE_ROOT)
+                if VRE.match(x) and os.path.isdir(os.path.join(MISERVICE_ROOT, x))]
+    except OSError:
+        m.note = "无法读取安装目录"
+        return m
+    if not vers:
+        m.note = "无版本目录"
+        return m
+
+    keep = service_bound_versions("MiService")
+    if not keep:
+        # 服务读不到时绝不盲删，退回保留最高版本并在备注里明确告警
+        keep[max(vers, key=verkey)] = "服务信息不可用，退回保留最高版本（请自行确认）"
+
+    for v in sorted(vers, key=verkey, reverse=True):
+        p = os.path.join(MISERVICE_ROOT, v)
+        size = path_size(p)
+        if v in keep:
+            m.add(v, p, size, "keep", "保留（%s）" % keep[v])
+            continue
+        if _recently_touched(p):
+            m.add(v, p, size, "keep", "2 小时内变动过，本次跳过")
+            continue
+        m.add(v, p, size, "delete")
+        m.actions.append({"op": "rmtree", "path": p, "size": size})
+
+    if is_running("MiService.exe"):
+        m.note = "管家服务正在运行，被占用的目录会自动跳过"
+    if keep:
+        m.note = (m.note + "  " if m.note else "") + \
+                 "保留版本: " + ", ".join(sorted(keep, key=verkey))
+    if not m.actions:
+        m.note = (m.note + "  " if m.note else "") + "无旧版本"
+    return m
+
+
+def scan_xiaomi_extra(log: PROGRESS = None) -> Module:
+    """小米电脑管家的其余残留：AI 服务旧版本、旧版管家目录、云更新器安装包。
+
+    这三处的「当前版本」依据各不相同，分别处理：
+      · XiaomiPCManager 有 6 个服务在跑，靠服务 ImagePath 判定
+      · AIService 没有服务，靠注册表 DisplayVersion 判定，并把目录内最高版本一并保护
+      · 云更新器的安装包只处理 90 天以前的，避免删掉正在进行的更新
+    """
+    m = Module("xiaomi_extra", "小米组件其他残留",
+               "小米电脑管家的 AI 服务旧版本、旧版管家目录、云更新器安装包缓存", True)
+    found_any = False
+
+    # A. 小米电脑管家程序目录
+    if os.path.isdir(XPM_ROOT):
+        found_any = True
+        try:
+            vers = [x for x in os.listdir(XPM_ROOT)
+                    if VRE.match(x) and os.path.isdir(os.path.join(XPM_ROOT, x))]
+        except OSError:
+            vers = []
+        keep = service_bound_versions("XiaomiPCManager")
+        if vers and not keep:
+            keep[max(vers, key=verkey)] = "服务信息不可用，退回保留最高版本"
+        for v in sorted(vers, key=verkey, reverse=True):
+            p = os.path.join(XPM_ROOT, v)
+            size = path_size(p)
+            if v in keep:
+                m.add("管家程序 %s" % v, p, size, "keep", "保留（%s）" % keep[v])
+                continue
+            if _recently_touched(p):
+                m.add("管家程序 %s" % v, p, size, "keep", "2 小时内变动过，本次跳过")
+                continue
+            m.add("管家程序 %s" % v, p, size, "delete")
+            m.actions.append({"op": "rmtree", "path": p, "size": size})
+
+    # B. 小米 AI 服务（超级小爱后端）
+    if os.path.isdir(AISERVICE_ROOT):
+        found_any = True
+        try:
+            vers = [x for x in os.listdir(AISERVICE_ROOT)
+                    if VRE.match(x) and os.path.isdir(os.path.join(AISERVICE_ROOT, x))]
+        except OSError:
+            vers = []
+        keep = {}
+        for v in reg_versions(["aiservice"]):
+            if VRE.match(v):
+                keep.setdefault(v, "注册表 DisplayVersion")
+        if vers:
+            top = max(vers, key=verkey)
+            if top not in keep:
+                keep[top] = "目录内最高版本" if keep else "注册表无记录，退回保留最高版本"
+        for v in sorted(vers, key=verkey, reverse=True):
+            p = os.path.join(AISERVICE_ROOT, v)
+            size = path_size(p)
+            if v in keep:
+                m.add("AI 服务 %s" % v, p, size, "keep", "保留（%s）" % keep[v])
+                continue
+            if _recently_touched(p):
+                m.add("AI 服务 %s" % v, p, size, "keep", "2 小时内变动过，本次跳过")
+                continue
+            m.add("AI 服务 %s" % v, p, size, "delete")
+            m.actions.append({"op": "rmtree", "path": p, "size": size})
+
+    # C. 小米云服务更新器留下的安装包
+    if os.path.isdir(XIAOMI_UPDATER):
+        found_any = True
+        for name, label, op in (("installer.exe", "云更新器安装包", "file"),
+                                ("pending", "云更新器待安装包", "rmtree")):
+            p = os.path.join(XIAOMI_UPDATER, name)
+            if not os.path.exists(p):
+                continue
+            size = path_size(p)
+            if size < 1024 * 1024:
+                continue
+            try:
+                days = (time.time() - os.path.getmtime(p)) / 86400.0
+            except OSError:
+                days = 0
+            if days < 90:
+                m.add(label, p, size, "keep", "%.0f 天内更新过，本次跳过" % days)
+                continue
+            m.add(label, p, size, "delete", "约 %.0f 天前的旧安装包，可重新下载" % days)
+            m.actions.append({"op": op, "path": p, "size": size})
+
+    if not found_any:
+        m.note = "未检出小米组件残留"
+    elif not m.actions:
+        m.note = ((m.note + "  ") if m.note else "") + "无旧版本可清"
+    return m
 
 
 # ---- 1. Windows 更新缓存 -------------------------------------------------
@@ -711,9 +922,10 @@ def scan_dism(log: PROGRESS = None) -> Module:
     m = Module("dism", "WinSxS 组件清理",
                "DISM 官方组件回收，耗时 10~30 分钟，更新后清理效果最好", True)
     win_sxs = os.path.join(WIN_DIR, "WinSxS")
-    size = path_size(win_sxs) if os.path.isdir(win_sxs) else 0
-    m.add("WinSxS 组件库（目录本身不会变小）", win_sxs, size, "note",
-          "硬链接居多，回收量体现在磁盘可用空间上")
+    # 不递归统计 WinSxS：里面是几十万个硬链接，遍历会让整个扫描卡住好几分钟，
+    # 而这个数字对「能回收多少」毫无参考意义（回收量体现在磁盘剩余空间上）。
+    m.add("WinSxS 组件库（不统计目录大小）", win_sxs, 0, "note",
+          "硬链接居多，遍历极慢且不反映回收量；实际效果看磁盘剩余空间的变化")
     m.total = 3 * 1024 ** 3
     m.note = "预计回收 2~4 GB（依更新数量而定）"
     m.actions.append({"op": "dism", "path": win_sxs, "size": 0})
@@ -721,6 +933,8 @@ def scan_dism(log: PROGRESS = None) -> Module:
 
 
 SCANNERS = {
+    "miservice": scan_miservice,
+    "xiaomi_extra": scan_xiaomi_extra,
     "win_update": scan_win_update,
     "win_temp": scan_win_temp,
     "win_leftover": scan_win_leftover,
@@ -824,6 +1038,9 @@ def clean_module(m: Module, log: PROGRESS = None, cancel: Callable[[], bool] = N
         try:
             if op == "rmtree":
                 log("  删除 %s（%s）" % (p, fmt_size(path_size(p))))
+                freed += remove_path(p, log)
+            elif op == "file":
+                log("  删除文件 %s（%s）" % (os.path.basename(p), fmt_size(path_size(p))))
                 freed += remove_path(p, log)
             elif op == "clear":
                 log("  清空 %s（%s）" % (p, fmt_size(path_size(p))))

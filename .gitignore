@@ -19,9 +19,9 @@ cleanup_log.txt
 crash.log
 
 # ---- PyInstaller 打包产物（exe 走 Releases，不进仓库）----
+# CleanCDrive.spec 是打包配置而非产物，需要随源码一起维护，所以不忽略 *.spec
 build/
 dist/
-*.spec
 
 # ---- 开发期临时截图与诊断文件 ----
 _shot_*.png
