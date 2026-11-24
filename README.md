@@ -8,7 +8,7 @@
 
 ## 下载即用（推荐）
 
-到 [Releases](../../releases) 页下载 `CleanCDrive.exe`，放到任意目录双击运行。**不需要安装 Python**，单文件约 11 MB，不写注册表，删掉即卸载。
+到 [Releases 最新版本](../../releases/latest) 页下载 `CleanCDrive.exe`，放到任意目录双击运行。**不需要安装 Python**，单文件约 11 MB，不写注册表，删掉即卸载。
 
 > 单文件 exe 首次启动会先解压到临时目录，约 1~2 秒；杀软偶尔会误报 PyInstaller 打包的程序，属已知现象，可加白名单。
 
